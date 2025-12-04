@@ -6,4 +6,4 @@ W/A/S/D = Up/Left/Down/Right
 
 ## ScreenShot
 
-![Preview]("image/preview.png")
+![Preview](image/preview.png)

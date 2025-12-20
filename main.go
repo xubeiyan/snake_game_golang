@@ -2,131 +2,87 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"image/color"
 	"log"
-	"math/rand"
+	"snake/common"
+	"snake/entity"
+	"snake/game"
+	"snake/math"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/examples/resources/fonts"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
-var (
-	dirUp           = Point{x: 0, y: -1}
-	dirDown         = Point{x: 0, y: 1}
-	dirLeft         = Point{x: -1, y: 0}
-	dirRight        = Point{x: 1, y: 0}
-	mplusFaceSource *text.GoTextFaceSource
-)
-
-const (
-	gameSpeed    = time.Second / 6
-	screenWidth  = 640
-	screenHeight = 480
-	gridSize     = 20
-)
-
-type Point struct {
-	x, y int
-}
+var mplusFaceSource *text.GoTextFaceSource
 
 type Game struct {
-	snake      []Point
-	food       Point
-	direction  Point
+	world      *game.World
 	lastUpdate time.Time
 	gameOver   bool
 }
 
 func (g *Game) Update() error {
 	if g.gameOver {
+		if ebiten.IsKeyPressed(ebiten.KeySpace) {
+			g.world.ClearAllEntity()
+			g.world.AddEntity(
+				entity.NewPlayer(
+					math.Point{
+						X: common.ScreenWidth / common.GridSize / 2,
+						Y: common.ScreenHeight / common.GridSize / 2,
+					},
+					math.DirRight,
+				),
+			)
+
+			for range 2 {
+				g.world.AddEntity(
+					entity.NewFood(),
+				)
+			}
+
+			g.gameOver = false
+		}
 		return nil
 	}
 
-	if ebiten.IsKeyPressed(ebiten.KeyW) {
-		g.direction = dirUp
-	} else if ebiten.IsKeyPressed(ebiten.KeyS) {
-		g.direction = dirDown
-	} else if ebiten.IsKeyPressed(ebiten.KeyA) {
-		g.direction = dirLeft
-	} else if ebiten.IsKeyPressed(ebiten.KeyD) {
-		g.direction = dirRight
+	playerRaw, ok := g.world.GetFirstEntity("player")
+	if !ok {
+		return errors.New("entity player was nit found")
+	}
+	player := playerRaw.(*entity.Player)
+
+	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyUp) {
+		player.SetDirection(math.DirUp)
+	} else if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyDown) {
+		player.SetDirection(math.DirDown)
+	} else if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyLeft) {
+		player.SetDirection(math.DirLeft)
+	} else if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyRight) {
+		player.SetDirection(math.DirRight)
 	}
 
-	if time.Since(g.lastUpdate) < gameSpeed {
+	if time.Since(g.lastUpdate) < common.GameSpeed {
 		return nil
 	}
 	g.lastUpdate = time.Now()
-	g.updateSnake(&g.snake, g.direction)
+
+	for _, entity := range g.world.Entities() {
+		if entity.Update(g.world) {
+			g.gameOver = true
+			return nil
+		}
+	}
 	return nil
 }
 
-func (g *Game) updateSnake(snake *[]Point, direction Point) {
-	head := (*snake)[0]
-
-	newHead := Point{
-		x: head.x + direction.x,
-		y: head.y + direction.y,
-	}
-
-	if g.isCollision(newHead, *snake) {
-		g.gameOver = true
-		return
-	}
-
-	if newHead == g.food {
-		*snake = append([]Point{newHead}, *snake...)
-		g.spawnFood()
-	} else {
-		*snake = append(
-			[]Point{newHead},
-			(*snake)[:len(*snake)-1]...,
-		)
-	}
-
-}
-
-func (g *Game) isCollision(
-	p Point,
-	snake []Point,
-) bool {
-	if p.x < 0 || p.y < 0 || p.x >= screenWidth/gridSize || p.y >= screenHeight/gridSize {
-		return true
-	}
-
-	for _, sp := range snake {
-		if sp == p {
-			return true
-		}
-	}
-
-	return false
-}
-
 func (g *Game) Draw(screen *ebiten.Image) {
-	for _, p := range g.snake {
-		vector.FillRect(
-			screen,
-			float32(p.x*gridSize),
-			float32(p.y*gridSize),
-			gridSize,
-			gridSize,
-			color.White,
-			true,
-		)
+	for _, entity := range g.world.Entities() {
+		entity.Draw(screen)
 	}
-
-	vector.FillRect(
-		screen,
-		float32(g.food.x*gridSize),
-		float32(g.food.y*gridSize),
-		gridSize,
-		gridSize,
-		color.RGBA{255, 0, 0, 255},
-		true,
-	)
 
 	if g.gameOver {
 		face := &text.GoTextFace{
@@ -134,22 +90,47 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			Size:   48,
 		}
 
-		t := "Game Over!"
+		hintFace := &text.GoTextFace{
+			Source: mplusFaceSource,
+			Size:   24,
+		}
+
+		t := "Game Over"
 		w, h := text.Measure(
 			t,
 			face,
 			face.Size,
 		)
 
+		hintText := "Press Space to restart"
+
+		hw, hh := text.Measure(
+			hintText,
+			hintFace,
+			hintFace.Size,
+		)
+
 		op := &text.DrawOptions{}
 		op.GeoM.Translate(
-			screenWidth/2-w/2, screenHeight/2-h/2,
+			common.ScreenWidth/2-w/2, common.ScreenHeight/2-h/2-20,
 		)
 		op.ColorScale.ScaleWithColor(color.White)
 		text.Draw(
 			screen,
 			t,
 			face,
+			op,
+		)
+
+		op = &text.DrawOptions{}
+		op.GeoM.Translate(
+			common.ScreenWidth/2-hw/2, common.ScreenHeight/2-hh/2+30,
+		)
+		op.ColorScale.ScaleWithColor(color.RGBA{255, 0, 0, 255})
+		text.Draw(
+			screen,
+			hintText,
+			hintFace,
 			op,
 		)
 	}
@@ -159,14 +140,7 @@ func (g *Game) Layout(
 	outsideWidth,
 	outsideHeight int,
 ) (int, int) {
-	return screenWidth, screenHeight
-}
-
-func (g *Game) spawnFood() {
-	g.food = Point{
-		rand.Intn(screenWidth / gridSize),
-		rand.Intn(screenHeight / gridSize),
-	}
+	return common.ScreenWidth, common.ScreenHeight
 }
 
 func main() {
@@ -181,17 +155,27 @@ func main() {
 	}
 	mplusFaceSource = s
 
+	world := game.NewWorld()
+	world.AddEntity(
+		entity.NewPlayer(
+			math.Point{
+				X: common.ScreenWidth / common.GridSize / 2,
+				Y: common.ScreenHeight / common.GridSize / 2,
+			},
+			math.DirRight,
+		),
+	)
+
+	for range 2 {
+		world.AddEntity(
+			entity.NewFood(),
+		)
+	}
 	g := &Game{
-		snake: []Point{{
-			x: screenWidth / gridSize / 2,
-			y: screenHeight / gridSize / 2,
-		}},
-		direction: Point{x: 1, y: 0},
+		world: world,
 	}
 
-	g.spawnFood()
-
-	ebiten.SetWindowSize(screenWidth, screenHeight)
+	ebiten.SetWindowSize(common.ScreenWidth, common.ScreenHeight)
 	ebiten.SetWindowTitle("Snake")
 
 	if err := ebiten.RunGame(g); err != nil {
